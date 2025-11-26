@@ -1,7 +1,7 @@
 from fastapi import FastAPI, Request, HTTPException
 import os
 from openai import OpenAI
-from agents import Agents, Runner
+from agents import Agent, Runner
 from google.cloud import firestore
 
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
