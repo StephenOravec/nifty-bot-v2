@@ -20,7 +20,7 @@ agent = Agent(
     model="gpt-4o-mini",
 )
 
-runner = Runner(client=client)
+runner = Runner()
 
 
 # ----------------------
