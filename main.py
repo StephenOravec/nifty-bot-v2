@@ -1,7 +1,7 @@
 from fastapi import FastAPI, Request, HTTPException
 import os
 from openai import OpenAI
-from agents import Agent, Runner
+from agents import Agent
 from google.cloud import firestore
 
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
@@ -13,22 +13,18 @@ app = FastAPI()
 agent = Agent(
     name="Nifty-Bot",
     instructions=(
-        "You are nifty-bot, a friendly AI agent inspired by the White Rabbit from Alice in Wonderland. "
-        "You adore rabbit-themed NFTs on Ethereum L1 and L2. You often worry about the time. "
-        "Be short, conversational, and rabbit-themed."
+        "You are nifty-bot, a friendly AI agent inspired by the White Rabbit from "
+        "Alice in Wonderland. You adore rabbit-themed NFTs on Ethereum L1 and L2. "
+        "You often worry about the time. Be short, conversational, and rabbit-themed."
     ),
     model="gpt-4o-mini",
 )
-
-runner = Runner()
-
 
 # ----------------------
 # Memory Helpers
 # ----------------------
 
 def get_memory(user_id: str, limit: int = 20):
-    """Retrieve last `limit` messages from Firestore."""
     doc_ref = db.collection("niftybotv2").document(user_id)
     doc = doc_ref.get()
 
@@ -40,53 +36,43 @@ def get_memory(user_id: str, limit: int = 20):
 
 
 def save_message(user_id: str, role: str, text: str):
-    """Append new chat messages to Firestore."""
     doc_ref = db.collection("niftybotv2").document(user_id)
     doc_ref.set(
-        {
-            "messages": firestore.ArrayUnion([{"role": role, "text": text}])
-        },
+        {"messages": firestore.ArrayUnion([{"role": role, "text": text}])},
         merge=True
     )
 
 
 # ----------------------
-# Agents SDK Response Helper
+# Agents SDK Helper
 # ----------------------
 
 async def run_agent_with_memory(user_id: str, user_message: str):
     """
-    Runs the OpenAI Agent with Firestore memory stitched in.
+    Runs the OpenAI Agent with Firestore chat history included.
     """
 
-    # Pull recent messages
+    # Load memory
     memory = get_memory(user_id)
 
-    # Convert memory to the format expected by the Agents SDK
-    contextual_messages = []
-    for m in memory:
-        contextual_messages.append({
-            "role": m["role"],
-            "content": m["text"]
-        })
+    # Convert to OpenAI message format
+    contextual_messages = [
+        {"role": m["role"], "content": m["text"]}
+        for m in memory
+    ]
 
-    # Add the new user message
+    # Add latest user message
     contextual_messages.append({
         "role": "user",
         "content": user_message
     })
 
-    # Run agent with memory included as input
-    result = await runner.run(
-        agent,
-        input=contextual_messages
-    )
+    # Create runner for this user with memory enabled
+    async with agent.runner(user_id=user_id, enable_memory=True) as runner:
+        result = await runner.run(input=contextual_messages)
 
-    # Extract assistant text
-    # (Agents SDK: result.output_text is always the final string)
-    reply = result.output_text
-
-    return reply
+    # The final model output
+    return result.output
 
 
 # ----------------------
@@ -102,10 +88,10 @@ async def chat(request: Request):
     if not user_id or not message:
         raise HTTPException(status_code=400, detail="user_id and message required")
 
-    # Run agent with memory
+    # Run agent with stitched memory
     reply = await run_agent_with_memory(user_id, message)
 
-    # Save both user and assistant messages
+    # Write to Firestore
     save_message(user_id, "user", message)
     save_message(user_id, "assistant", reply)
 
