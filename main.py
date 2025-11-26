@@ -78,7 +78,7 @@ async def run_agent_with_memory(user_id: str, user_message: str):
 
     # Run agent with memory included as input
     result = runner.run(
-        agent=agent,
+        agent,
         input=contextual_messages
     )
 
