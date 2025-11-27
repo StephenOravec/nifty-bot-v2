@@ -2,4 +2,3 @@ fastapi
 uvicorn[standard]
 openai
 openai-agents
-google-cloud-firestore
