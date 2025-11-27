@@ -113,47 +113,49 @@ async def run_agent_with_memory(session_id: str, user_message: str):
     logger.info(f"Total messages in context: {len(contextual_messages)}")
 
     try:
-        # Run the agent
-        async with agent.runner(user_id=session_id, enable_memory=True) as runner:
-            result = await runner.run(input=contextual_messages)
+        # Run the agent directly (no .runner() method)
+        result = await agent.run(
+            messages=contextual_messages,
+            user_id=session_id
+        )
         
         # Log the raw result for debugging
         logger.info(f"Agent result type: {type(result)}")
-        logger.info(f"Agent result attributes: {dir(result)}")
         logger.info(f"Agent result: {result}")
         
         # Extract the text content from the result
         response_text = None
         
-        # Try to extract from messages
-        if hasattr(result, 'messages') and result.messages:
+        # The result might be a string directly
+        if isinstance(result, str):
+            response_text = result
+        # Or it might have a messages attribute
+        elif hasattr(result, 'messages') and result.messages:
             logger.info(f"Found {len(result.messages)} messages in result")
             for msg in reversed(result.messages):
-                logger.info(f"Message role: {msg.role}, content type: {type(msg.content)}")
                 if msg.role == "assistant" and msg.content:
                     if isinstance(msg.content, list):
                         response_text = msg.content[0].text if hasattr(msg.content[0], 'text') else str(msg.content[0])
                     else:
-                        response_text = msg.content
+                        response_text = str(msg.content)
                     break
-        
-        # Try to extract from output
-        if not response_text and hasattr(result, 'output'):
-            logger.info(f"Trying output attribute: {result.output}")
-            response_text = str(result.output) if result.output else None
+        # Or it might have a content/output attribute
+        elif hasattr(result, 'content'):
+            response_text = str(result.content)
+        elif hasattr(result, 'output'):
+            response_text = str(result.output)
         
         # Final fallback
         if not response_text:
-            logger.warning("Could not extract response from agent result")
-            response_text = "I'm having trouble responding right now. Please try again!"
+            logger.warning("Could not extract response, using string representation")
+            response_text = str(result)
         
         logger.info(f"Final response: {response_text}")
         return response_text
         
     except Exception as e:
         logger.exception(f"Error running agent: {e}")
-        return "Sorry, I encountered an error. Please try again!"
-
+        raise
 
 # ----------------------
 # Routes
