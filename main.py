@@ -4,7 +4,7 @@ import sqlite3
 import secrets
 import logging
 from openai import OpenAI
-from agents import Agent
+from agents import Agent, Runner
 
 # ----------------------
 # Logging Setup
@@ -104,51 +104,31 @@ async def run_agent_with_memory(session_id: str, user_message: str):
     # Load memory
     memory = session_manager.get_messages(session_id)
 
-    # Convert to OpenAI message format
-    contextual_messages = [{"role": m["role"], "content": m["text"]} for m in memory]
-
-    # Add latest user message
-    contextual_messages.append({"role": "user", "content": user_message})
+    # Build conversation history
+    conversation = []
+    for msg in memory:
+        conversation.append({
+            "role": msg["role"], 
+            "content": msg["text"]
+        })
     
-    logger.info(f"Total messages in context: {len(contextual_messages)}")
+    # Add the new user message
+    conversation.append({
+        "role": "user",
+        "content": user_message
+    })
+    
+    logger.info(f"Total messages in context: {len(conversation)}")
 
     try:
-        # Run the agent directly (no .runner() method)
-        result = await agent.run(
-            messages=contextual_messages,
-            user_id=session_id
-        )
+        result = await Runner.run(agent, conversation)
         
-        # Log the raw result for debugging
+        # Log the result
         logger.info(f"Agent result type: {type(result)}")
-        logger.info(f"Agent result: {result}")
+        logger.info(f"Agent result attributes: {dir(result)}")
         
-        # Extract the text content from the result
-        response_text = None
-        
-        # The result might be a string directly
-        if isinstance(result, str):
-            response_text = result
-        # Or it might have a messages attribute
-        elif hasattr(result, 'messages') and result.messages:
-            logger.info(f"Found {len(result.messages)} messages in result")
-            for msg in reversed(result.messages):
-                if msg.role == "assistant" and msg.content:
-                    if isinstance(msg.content, list):
-                        response_text = msg.content[0].text if hasattr(msg.content[0], 'text') else str(msg.content[0])
-                    else:
-                        response_text = str(msg.content)
-                    break
-        # Or it might have a content/output attribute
-        elif hasattr(result, 'content'):
-            response_text = str(result.content)
-        elif hasattr(result, 'output'):
-            response_text = str(result.output)
-        
-        # Final fallback
-        if not response_text:
-            logger.warning("Could not extract response, using string representation")
-            response_text = str(result)
+        # Extract the final output
+        response_text = result.final_output
         
         logger.info(f"Final response: {response_text}")
         return response_text
@@ -156,6 +136,7 @@ async def run_agent_with_memory(session_id: str, user_message: str):
     except Exception as e:
         logger.exception(f"Error running agent: {e}")
         raise
+
 
 # ----------------------
 # Routes
@@ -170,6 +151,7 @@ async def chat(request: Request):
         logger.info(f"Received chat request - session_id: {session_id}, message: {message}")
 
         if not message:
+            logger.warning("Empty message received")
             raise HTTPException(status_code=400, detail="message required")
 
         # Generate session_id if first request
@@ -178,7 +160,15 @@ async def chat(request: Request):
             logger.info(f"Generated new session_id: {session_id}")
 
         # Run agent
-        reply = await run_agent_with_memory(session_id, message)
+        try:
+            reply = await run_agent_with_memory(session_id, message)
+            logger.info(f"Agent returned reply: {reply}")
+        except Exception as agent_error:
+            logger.exception(f"Agent execution failed: {agent_error}")
+            return {
+                "response": "Sorry, I encountered an error. Please try again!",
+                "session_id": session_id
+            }
 
         # Save messages to SQLite
         session_manager.save_message(session_id, "user", message)
@@ -191,7 +181,7 @@ async def chat(request: Request):
         raise
     except Exception as e:
         logger.exception(f"Unexpected error in chat endpoint: {e}")
-        raise HTTPException(status_code=500, detail="Internal server error")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.get("/health")
